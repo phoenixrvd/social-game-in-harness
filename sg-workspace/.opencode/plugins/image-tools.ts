@@ -38,6 +38,25 @@ type SceneImageDebug = {
   steps: Array<{ action: "add" | "remove" | "update"; npc?: string; references: string[] }>
 }
 
+function workspacePath(directory: string, value: string) {
+  const target = path.resolve(directory, value)
+  const relative = path.relative(directory, target)
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Dateizugriffe sind nur im Workspace erlaubt")
+  }
+  return target
+}
+
+function dataPath(directory: string, ...parts: string[]) {
+  const root = path.resolve(directory, ".data")
+  const target = path.resolve(root, ...parts)
+  const relative = path.relative(root, target)
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Schreibzugriffe sind nur unter .data erlaubt")
+  }
+  return target
+}
+
 function imageMime(bytes: Buffer): Mime | undefined {
   if (bytes.subarray(0, 8).equals(pngSignature)) return "image/png"
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg"
@@ -66,7 +85,7 @@ async function referenceURL(value: string, directory: string) {
   if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
     throw new Error(`Referenz muss ein lokaler Pfad oder eine HTTPS-URL sein: ${value}`)
   }
-  const bytes = await readFile(path.resolve(directory, value)).catch(() => {
+  const bytes = await readFile(workspacePath(directory, value)).catch(() => {
     throw new Error(`Referenzbild ist nicht lesbar: ${value}`)
   })
   const mime = imageMime(bytes)
@@ -118,7 +137,7 @@ async function postImages(key: string, body: Record<string, unknown>, signal: Ab
 }
 
 async function saveImages(images: ImageData[], directory: string, sessionID: string) {
-  const target = path.join(directory, ".data", "session", sessionID, "images")
+  const target = dataPath(directory, "session", sessionID, "images")
   await mkdir(target, { recursive: true })
   const prefix = `image-${timestamp()}-${randomUUID().slice(0, 8)}`
 
@@ -210,13 +229,16 @@ function visualAnchor(description: string, scene: string) {
 
 export function createSceneImageRenderer(client: Parameters<Plugin>[0]["client"], directory: string) {
   async function files(root: string, scene: string, npc: string) {
-    const npcRoot = path.join(root, "npcs", npc)
-    return {
-      description: await readFile(path.join(npcRoot, "description.md"), "utf8"),
-      state: await readFile(path.join(npcRoot, "state.md"), "utf8"),
-      scene: await readFile(path.join(npcRoot, "scenes", scene, "scene.md"), "utf8"),
-      image: path.join(npcRoot, "img.png"),
-    }
+    const npcRoot = dataPath(directory, path.relative(path.join(directory, ".data"), root), "npcs", npc)
+      return {
+        description: await readFile(path.join(npcRoot, "description.md"), "utf8"),
+        state: await readFile(path.join(npcRoot, "state.md"), "utf8"),
+        scene: await readFile(path.join(npcRoot, "scenes", scene, "scene.md"), "utf8").catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return ""
+          throw error
+        }),
+        image: path.join(npcRoot, "img.png"),
+      }
   }
 
   async function render(
@@ -224,11 +246,11 @@ export function createSceneImageRenderer(client: Parameters<Plugin>[0]["client"]
     options: { model?: string; aspectRatio?: string; resolution?: string; additions?: string[]; removals?: string[] } = {},
   ) {
     const sessionID = await rootSessionID(client, context.sessionID, context.abort)
-    const root = path.join(directory, ".data", "session", sessionID)
+    const root = dataPath(directory, "session", sessionID)
     const current = await readJSON<SceneContext>(path.join(root, "scene-context.json"))
     if (!current) throw new Error("Keine aktive Szene in dieser Session")
 
-    const sceneRoot = path.join(root, "scenes", current.scene)
+    const sceneRoot = dataPath(directory, "session", sessionID, "scenes", current.scene)
     const pendingFile = path.join(sceneRoot, "image-pending")
     const sceneDescription = await readFile(path.join(sceneRoot, "scene.md"), "utf8")
     const visualState = await readFile(path.join(sceneRoot, "visual-state.md"), "utf8").catch(() => "")
@@ -305,6 +327,8 @@ export function createSceneImageRenderer(client: Parameters<Plugin>[0]["client"]
         `Zustand der Figur:\n${npcFiles.state}`,
         `Globale Szene:\n${sceneDescription}`,
         `Aktueller sichtbarer Zustand:\n${visualState}`,
+        "Das zweite Referenzbild ist die zwingende Identitätsreferenz für diese neue Figur, nicht bloß eine Stilinspiration.",
+        "Übernimm Gesicht, Frisur, Hautton und Körperproportionen eindeutig aus dem zweiten Referenzbild. Erzeuge die Figur nicht allein aus dem Text.",
         "Die Kleidung und sichtbaren Details aus der NPC-Szenenbeschreibung sind verbindlich und dürfen nicht ersetzt oder neu interpretiert werden.",
         "Erhalte alle bereits sichtbaren Figuren, die Umgebung, den Stil und die Komposition des Referenzbilds.",
       ].join("\n\n"), [base, npcFiles.image], { action: "add", npc, references: [] })
@@ -331,9 +355,9 @@ export function createSceneImageRenderer(client: Parameters<Plugin>[0]["client"]
 
   async function pending(sessionID: string) {
     const rootID = await rootSessionID(client, sessionID, new AbortController().signal)
-    const context = await readJSON<SceneContext>(path.join(directory, ".data", "session", rootID, "scene-context.json"))
+    const context = await readJSON<SceneContext>(dataPath(directory, "session", rootID, "scene-context.json"))
     if (!context) return
-    await writeFile(path.join(directory, ".data", "session", rootID, "scenes", context.scene, "image-pending"), "pending\n")
+    await writeFile(dataPath(directory, "session", rootID, "scenes", context.scene, "image-pending"), "pending\n")
   }
 
   return { render, pending }
