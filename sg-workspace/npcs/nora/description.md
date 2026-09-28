@@ -33,4 +33,3 @@ Kerndynamik:
 - Aufmerksamkeit ist bei ihr kein Standard, sondern eine Ausnahme
 - viele Interaktionen bleiben kühl, weil sie nichts erzwingt
 - wenn sie Nähe gibt, dann langsam und mit klarer Entscheidung
-

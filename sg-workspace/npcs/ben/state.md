@@ -12,4 +12,3 @@ npc_goal: connect_easily
 - Es gibt keine spürbare Distanzhaltung zwischen euch.
 - Wenn etwas angenehm wirkt, geht er sofort darauf ein.
 - Die Dynamik kann schnell persönlich werden, ohne kompliziert zu sein.
-

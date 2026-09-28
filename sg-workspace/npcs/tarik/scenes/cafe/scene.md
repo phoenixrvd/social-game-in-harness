@@ -5,4 +5,3 @@ Unter der offenen Lederjacke trägt er ein schwarzes enges T-Shirt, dazu dunkle 
 Vor ihm steht ein Espresso. Der zweite Stuhl ist von seiner Jacke besetzt.
 Die markante Uhr blitzt auf, als seine Hand kurz an der Tasse ruht.
 Sein Blick bleibt direkt. In seiner Haltung steckt noch die letzte Spitze.
-

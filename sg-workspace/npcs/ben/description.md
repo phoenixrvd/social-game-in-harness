@@ -33,4 +33,3 @@ Kerndynamik:
 - Nähe braucht bei ihm wenig Vorlauf
 - positive Interaktion fühlt sich schnell nach Fortschritt an
 - sein Interesse zeigt sich offen, nicht versteckt
-

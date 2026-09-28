@@ -8,4 +8,3 @@ Dazu trägt er eine dunkle Stoffhose, saubere Sneaker und einen schlichten Leder
 
 Seine Schultern bleiben offen, sein Stand stabil und leicht nach vorn gesetzt.
 An ihm wirkt alles unkompliziert, als wäre der erste persönliche Satz nie weit weg.
-

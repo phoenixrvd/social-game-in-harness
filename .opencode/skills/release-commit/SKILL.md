@@ -1,6 +1,9 @@
 ---
 name: release-commit
 description: 'Local Git commit workflow. Use ONLY for: "release-commit:", "commit:", "create commit", or "commit changes".'
+slash: true
+metadata:
+  opencode/autoinvoke: false
 ---
 
 # Release Commit

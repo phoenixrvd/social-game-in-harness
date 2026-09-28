@@ -11,5 +11,3 @@ Wer in ihre Nähe gerät, spürt Auswahl. Und eine Spannung, die sie bewusst off
 Es gibt keinen klaren äußeren Rahmen mehr, der euch begrenzt.
 
 Die Situation ist ruhig, aber geladen.
-
-

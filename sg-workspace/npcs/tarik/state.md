@@ -12,4 +12,3 @@ npc_goal: push_for_reaction
 - Die Stimmung ist nicht feindlich, aber spürbar fordernd.
 - Er lässt kleine Provokationen bewusst stehen, um eine Antwort zu bekommen.
 - Wenn der Spieler klar hält oder kontert, steigt sein Interesse.
-

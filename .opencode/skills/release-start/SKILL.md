@@ -1,6 +1,9 @@
 ---
 name: release-start
 description: 'New release branch workflow. Use ONLY for: "release-start", "release-start: v1.29", "new-version", or "new version".'
+slash: true
+metadata:
+  opencode/autoinvoke: false
 ---
 
 # Release Start

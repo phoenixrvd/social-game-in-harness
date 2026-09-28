@@ -9,4 +9,3 @@ Das Handy hält sie in einer Hand, locker, aber schon so, als wäre der nächste
 Ihre Haltung bleibt gerade und knapp, das Gewicht leicht auf ein Bein verlagert.
 
 Sie wirkt bereit zu gehen, ohne den Kontakt ganz aufzulösen.
-

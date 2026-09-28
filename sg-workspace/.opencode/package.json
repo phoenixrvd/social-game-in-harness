@@ -1,5 +1,14 @@
 {
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit --module NodeNext --moduleResolution NodeNext --target ES2022 --skipLibCheck --strict --allowImportingTsExtensions plugins/*.ts",
+    "test": "node --test test/*.test.mjs"
+  },
   "dependencies": {
-    "@opencode-ai/plugin": "1.18.30"
+    "@opencode/plugin": "2.0.18"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "typescript": "^5.9.3"
   }
 }

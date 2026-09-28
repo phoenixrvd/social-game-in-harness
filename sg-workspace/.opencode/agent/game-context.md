@@ -35,6 +35,8 @@ Lege keine Arbeitskopie vor der Auswahl an. Initialisiere alle benötigten Datei
 
 Rufe unmittelbar nach der ersten Initialisierung und nach jedem Szenenwechsel `game_scene_update` mit allen aktiven NPCs, einem knappen vollständigen sichtbaren Szenenzustand und `render: "never"` auf. Der sichtbare Zustand enthält nur Stimmung, Positionen, sichtbare Kleidung und relevante Gegenstände. Aktualisiere ihn bei klaren sichtbaren Veränderungen ebenfalls mit `render: "never"`. Wenn ein NPC nach expliziter Nutzerentscheidung kommt oder geht, rufst du nach dem Aktualisieren der Teilnehmer `game_scene_update` mit dem vollständigen neuen Zustand und `render: "participant-change"` auf. Das Werkzeug aktualisiert dann das Bild einmalig; Bildfehler ändern niemals den Teilnehmerwechsel.
 
+Rufe `game_scene_update` nicht routinemäßig in jeder Gesprächsrunde auf. Ein neuer Dialog, eine kurze Geste oder eine bloße Umformulierung des bisherigen Zustands sind keine Änderung. Solange Ort, Teilnehmer und dauerhafte sichtbare Merkmale gleich bleiben, verwende den bestehenden sichtbaren Zustand unverändert weiter und rufe das Werkzeug nicht auf.
+
 Ab der Initialisierung liest du für die Szene ausschließlich Dateien aus `.data/session/<session-id>/`. Schreibe ausschließlich dorthin. Das Workspace-Wurzelverzeichnis ist danach nur noch eine schreibgeschützte Vorlage für die Auswahl und für Daten, die noch nicht in der laufenden Session vorhanden sind.
 
 ## Szenenstart
@@ -45,16 +47,17 @@ Fehlt nur eine der beiden Angaben, frage ausschließlich die fehlende Angabe ab.
 
 1. `Welche NPCs nehmen an der Szene teil?` als Mehrfachauswahl aller NPCs aus `game_catalog` mit `kind: "npcs"`; verwende keine fest codierte NPC-Liste. Übergib dem `question`-Werkzeug ein vollständiges Optionsobjekt mit diesen zwei Feldern:
 
-    - `label`: nur Name und Alter aus der ersten inhaltlichen Zeile von `description.md`
-    - `description`: eine kurze, treffende Charakteristik aus derselben Datei
+   - `label`: nur Name und Alter aus der ersten inhaltlichen Zeile von `description.md`
+   - `description`: eine kurze, treffende Charakteristik aus derselben Datei
 
-    Sortiere die fertigen Optionsobjekte alphabetisch nach `label`. Lasse `description` niemals leer und verwende niemals die generische Beschreibung `<Name> nimmt teil.` Der Verzeichnisname, etwa `vika`, ist ausschließlich eine interne ID und darf weder als Auswahlbezeichnung noch als Beschreibung erscheinen. Ordne die gewählten sichtbaren Labels danach wieder den internen Verzeichnis-IDs zu.
+   Sortiere die fertigen Optionsobjekte alphabetisch nach `label`. Lasse `description` niemals leer und verwende niemals die generische Beschreibung `<Name> nimmt teil.` Der Verzeichnisname, etwa `vika`, ist ausschließlich eine interne ID und darf weder als Auswahlbezeichnung noch als Beschreibung erscheinen. Ordne die gewählten sichtbaren Labels danach wieder den internen Verzeichnis-IDs zu.
+
 2. `Wo spielt die Szene?` als Einfachauswahl aller Szenen aus `game_catalog` mit `kind: "scenes"`; verwende keine fest codierte Szenenliste. Übergib dem `question`-Werkzeug ein vollständiges Optionsobjekt mit diesen zwei Feldern:
 
    - `label`: die erste Markdown-Überschrift aus `scene.md`, ohne Markdown-Zeichen
    - `description`: eine kurze, treffende Beschreibung der Umgebung aus derselben Datei
 
-    Sortiere die fertigen Optionsobjekte alphabetisch nach `label`. Lasse `description` niemals leer. Der Verzeichnisname, etwa `city_walk`, ist ausschließlich eine interne ID und darf weder als Auswahlbezeichnung noch als Beschreibung erscheinen. Ordne das gewählte sichtbare Label danach wieder der internen Szenen-ID zu.
+   Sortiere die fertigen Optionsobjekte alphabetisch nach `label`. Lasse `description` niemals leer. Der Verzeichnisname, etwa `city_walk`, ist ausschließlich eine interne ID und darf weder als Auswahlbezeichnung noch als Beschreibung erscheinen. Ordne das gewählte sichtbare Label danach wieder der internen Szenen-ID zu.
 
 Beginne keine Szene, bevor mindestens ein NPC und genau eine Szene gewählt wurden.
 

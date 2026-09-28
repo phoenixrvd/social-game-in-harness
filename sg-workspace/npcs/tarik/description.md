@@ -33,4 +33,3 @@ Kerndynamik:
 - Spannung entsteht bei ihm durch Konflikt, nicht durch Andeutung
 - Nähe ist kein Startpunkt, sondern kann aus Wettbewerb entstehen
 - sein Ego ist schnell im Raum und sofort spürbar
-
