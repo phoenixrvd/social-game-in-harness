@@ -5,12 +5,24 @@ permissions:
   - action: read
     resource: "*"
     effect: allow
-  - action: edit
+  - action: read
+    resource: "**/.data/avatars/**"
+    effect: deny
+  - action: read
+    resource: ".data/avatars/**"
+    effect: deny
+  - action: read
+    resource: "**/player/private/**"
+    effect: deny
+  - action: grep
+    resource: "*"
+    effect: deny
+  - action: glob
     resource: "*"
     effect: deny
   - action: edit
-    resource: ".data/**"
-    effect: allow
+    resource: "*"
+    effect: deny
   - action: shell
     resource: "*"
     effect: deny

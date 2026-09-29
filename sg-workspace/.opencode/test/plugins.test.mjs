@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, utimes } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -98,6 +106,12 @@ test("scene state is written only when its contents change", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "social-game-state-"));
   try {
     const registered = await tools(directory);
+    const playerRoot = path.join(directory, ".data/session/ses_test/player");
+    await mkdir(playerRoot, { recursive: true });
+    await writeFile(
+      path.join(playerRoot, "context.json"),
+      JSON.stringify({ avatar: null, visible: "", known: [] }),
+    );
     const update = registered.get("game_scene_update");
     const context = {
       sessionID: "ses_test",

@@ -21,6 +21,12 @@ Nutzer und den hier definierten Agenten bzw. Charakteren.
 - `game-context` ist der gemeinsame Game Agent. Er wählt Teilnehmer und Ort,
   hält den aktiven Gesprächskontext und spielt alle aktiven NPCs in einer
   gemeinsamen Szene.
+- `game-create-avatar` erstellt eigene Spielerprofile als interaktiver
+  Vordergrund-Subagent. Fragen und Bestätigung bleiben im Kindkontext; zurück
+  kommen nur Avatar-ID und Status. Es gibt keine Standardavatare.
+- `game-avatar-context` filtert das vollständige Avatar-Profil einmalig vor
+  Spielbeginn passend zu Einstiegsszene und bestätigten Bekanntschaften. Nur
+  seine gefilterte Ausgabe gelangt in den gemeinsamen Spielkontext.
 
 ## Aktiver Gesprächskontext
 
@@ -32,6 +38,16 @@ Der Koordinator hält für jede laufende Szene diese verbindlichen Angaben vor:
 - pro aktivem NPC dessen Charakter und Zustand sowie, falls vorhanden, eine
   passende NPC-Szene unter `.data/session/<session-id>/npcs/<npc>/`
 - den relevanten gemeinsamen Gesprächsverlauf
+- den gefilterten Spielerkontext unter
+  `.data/session/<session-id>/player/context.json`, getrennt nach sichtbaren
+  Angaben und bestätigtem Vorwissen pro NPC
+
+- Vollständige Avatar-Profile unter `.data/avatars/` und Session-Kopien unter
+  `player/private/` sind kein gemeinsamer Spielkontext. Nur Wizard bzw.
+  Profilfilter greifen über ihre dafür vorgesehenen Werkzeuge darauf zu.
+- Spielerinitialisierung erfolgt vor der ersten Szene. Während des Spiels,
+  bei Szenenwechseln und beim Fortsetzen erfolgt keine neue Profilfilterung.
+  Der Nutzer steuert seine Figur; unbekannte Angaben bleiben offen.
 
 - Die globale Szene gilt für alle; NPC-Szenen ergänzen sie nur für den jeweiligen
   Charakter.

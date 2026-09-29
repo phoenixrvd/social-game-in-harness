@@ -1,6 +1,23 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "game-context",
+  "plugins": [
+    {
+      "package": "./plugins/auto-compact.ts",
+      "options": {
+        "thresholdTokens": 70000,
+        "minUserTurns": 10,
+        "agent": "game-context"
+      }
+    }
+  ],
+  "compaction": {
+    "keep": { "tokens": 15000 }
+  },
+  "agents": {
+    "build": { "disabled": true },
+    "plan": { "disabled": true }
+  },
   "permissions": [
     { "action": "image_generate", "resource": "*", "effect": "ask" },
     { "action": "image_edit", "resource": "*", "effect": "ask" }

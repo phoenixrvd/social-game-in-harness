@@ -5,6 +5,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@opencode/client": "^2.0.18",
     "@opencode/plugin": "2.0.18"
   },
   "devDependencies": {

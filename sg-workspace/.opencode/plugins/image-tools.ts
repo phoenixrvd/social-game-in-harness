@@ -41,6 +41,12 @@ type Mime = keyof typeof extensions;
 type ImageData = { bytes: Buffer; mime: Mime };
 type SavedImage = { path: string; mime: Mime };
 type SceneContext = { scene: string; npcs: string[] };
+type ImageArgs = {
+  prompt: string;
+  model?: string;
+  aspectRatio?: string;
+  resolution?: string;
+};
 type SceneImageDebug = {
   model: string;
   parameters: { n: 1; aspectRatio: string | null; resolution: string | null };
@@ -518,7 +524,84 @@ export default Plugin.define({
     const directory = ctx.location.directory;
     const sceneRenderer = createSceneImageRenderer(ctx, directory);
 
-    const args = {
+    async function generateImage(input: unknown, context: ToolContext) {
+      const { prompt, model, aspectRatio, resolution } = input as ImageArgs;
+      const route = resolveModel(model);
+      const key = await requestKey(ctx);
+      const images = await postImages(
+        key,
+        {
+          model: route,
+          prompt,
+          n: 1,
+          aspect_ratio: aspectRatio,
+          resolution,
+        },
+        context.signal,
+      );
+      const saved = await saveImages(images, directory, context.sessionID);
+      return await imageResult(
+        { model: route, images: saved },
+        saved.map((image) => image.path),
+      );
+    }
+
+    async function editImage(input: unknown, context: ToolContext) {
+      const { prompt, model, aspectRatio, resolution, referenceImages } =
+        input as ImageArgs & { referenceImages: string[] };
+      const route = resolveModel(model);
+      const maxReferences = models[route].maxReferences;
+      if (referenceImages.length > maxReferences) {
+        throw new Error(
+          `${route} akzeptiert höchstens ${maxReferences} Referenzbilder`,
+        );
+      }
+      const references = await Promise.all(
+        referenceImages.map((value) => referenceURL(value, directory)),
+      );
+      const key = await requestKey(ctx);
+      const images = await postImages(
+        key,
+        {
+          model: route,
+          prompt,
+          n: 1,
+          input_references: references.map((url) => ({
+            type: "image_url",
+            image_url: { url },
+          })),
+          aspect_ratio: aspectRatio,
+          resolution,
+        },
+        context.signal,
+      );
+      const saved = await saveImages(images, directory, context.sessionID);
+      return await imageResult(
+        { operation: "edit", model: route, images: saved },
+        saved.map((image) => image.path),
+      );
+    }
+
+    async function renderSceneImage(input: unknown, context: ToolContext) {
+      const { model, aspectRatio, resolution } = input as Omit<
+        ImageArgs,
+        "prompt"
+      >;
+      try {
+        const rendered = await sceneRenderer.render(context, {
+          model,
+          aspectRatio,
+          resolution,
+        });
+        const { file, ...result } = rendered;
+        return await imageResult(result, [file]);
+      } catch (error) {
+        await sceneRenderer.pending(context.sessionID);
+        throw error;
+      }
+    }
+
+    const imageProperties = {
       prompt: { type: "string", minLength: 1, description: "Bildbeschreibung" },
       model: { type: "string", description: `Route aus: ${modelList}` },
       aspectRatio: {
@@ -529,12 +612,6 @@ export default Plugin.define({
         type: "string",
         description: "z. B. 1K, 2K; nur Werte, die das Modell unterstützt",
       },
-    };
-    type ImageArgs = {
-      prompt: string;
-      model?: string;
-      aspectRatio?: string;
-      resolution?: string;
     };
 
     await ctx.tool.transform((editor) => {
@@ -549,31 +626,11 @@ export default Plugin.define({
         ].join(" "),
         input: {
           type: "object",
-          properties: args,
+          properties: imageProperties,
           required: ["prompt"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const { prompt, model, aspectRatio, resolution } = input as ImageArgs;
-          const route = resolveModel(model);
-          const key = await requestKey(ctx);
-          const images = await postImages(
-            key,
-            {
-              model: route,
-              prompt,
-              n: 1,
-              aspect_ratio: aspectRatio,
-              resolution,
-            },
-            context.signal,
-          );
-          const saved = await saveImages(images, directory, context.sessionID);
-          return await imageResult(
-            { model: route, images: saved },
-            saved.map((image) => image.path),
-          );
-        },
+        execute: generateImage,
       });
       editor.add({
         name: "image_edit",
@@ -588,7 +645,7 @@ export default Plugin.define({
         input: {
           type: "object",
           properties: {
-            ...args,
+            ...imageProperties,
             referenceImages: {
               type: "array",
               items: { type: "string", minLength: 1 },
@@ -601,41 +658,7 @@ export default Plugin.define({
           required: ["prompt", "referenceImages"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const { prompt, model, aspectRatio, resolution, referenceImages } =
-            input as ImageArgs & { referenceImages: string[] };
-          const route = resolveModel(model);
-          const maxReferences = models[route].maxReferences;
-          if (referenceImages.length > maxReferences) {
-            throw new Error(
-              `${route} akzeptiert höchstens ${maxReferences} Referenzbilder`,
-            );
-          }
-          const references = await Promise.all(
-            referenceImages.map((value) => referenceURL(value, directory)),
-          );
-          const key = await requestKey(ctx);
-          const images = await postImages(
-            key,
-            {
-              model: route,
-              prompt,
-              n: 1,
-              input_references: references.map((url) => ({
-                type: "image_url",
-                image_url: { url },
-              })),
-              aspect_ratio: aspectRatio,
-              resolution,
-            },
-            context.signal,
-          );
-          const saved = await saveImages(images, directory, context.sessionID);
-          return await imageResult(
-            { operation: "edit", model: route, images: saved },
-            saved.map((image) => image.path),
-          );
-        },
+        execute: editImage,
       });
       editor.add({
         name: "scene_image_render",
@@ -645,30 +668,13 @@ export default Plugin.define({
         input: {
           type: "object",
           properties: {
-            model: args.model,
-            aspectRatio: args.aspectRatio,
-            resolution: args.resolution,
+            model: imageProperties.model,
+            aspectRatio: imageProperties.aspectRatio,
+            resolution: imageProperties.resolution,
           },
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const { model, aspectRatio, resolution } = input as Omit<
-            ImageArgs,
-            "prompt"
-          >;
-          try {
-            const rendered = await sceneRenderer.render(context, {
-              model,
-              aspectRatio,
-              resolution,
-            });
-            const { file, ...result } = rendered;
-            return await imageResult(result, [file]);
-          } catch (error) {
-            await sceneRenderer.pending(context.sessionID);
-            throw error;
-          }
-        },
+        execute: renderSceneImage,
       });
     });
   },

@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin";
+import type { ToolContext } from "@opencode/plugin/promise/tool";
 import {
   copyFile,
   mkdir,
@@ -26,6 +27,13 @@ type CatalogEntry = {
   source: "data" | "src";
 };
 type NPCContext = { scene: string; content: string };
+type SceneContext = { scene: string; npcs: string[] };
+type NPCChanges = {
+  description?: string;
+  state?: string;
+  image?: string;
+  contexts?: NPCContext[];
+};
 
 function slugify(value: string) {
   const slug = value
@@ -85,11 +93,9 @@ async function copyIfMissing(dataRoot: string, source: string, target: string) {
   }
 }
 
-async function readContext(
-  file: string,
-): Promise<{ scene: string; npcs: string[] } | undefined> {
+async function readContext(file: string): Promise<SceneContext | undefined> {
   return readFile(file, "utf8")
-    .then((content) => JSON.parse(content) as { scene: string; npcs: string[] })
+    .then((content) => JSON.parse(content) as SceneContext)
     .catch((error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw error;
@@ -125,35 +131,35 @@ export default Plugin.define({
     const sourceRoot = directory;
     const dataRoot = path.join(directory, ".data");
 
-    const resolvedContentFile = async (
+    async function findContentFile(
       kind: ContentKind,
       id: string,
       ...parts: string[]
-    ) => {
+    ) {
       validateID(id, kind === "npcs" ? "NPC-ID" : "Szenen-ID");
       const local = path.join(dataRoot, kind, id, ...parts);
       if (await exists(local)) return local;
       const standard = path.join(sourceRoot, kind, id, ...parts);
       if (await exists(standard)) return standard;
-    };
+    }
 
-    const contentFile = async (
+    async function requireContentFile(
       kind: ContentKind,
       id: string,
       ...parts: string[]
-    ) => {
-      const file = await resolvedContentFile(kind, id, ...parts);
+    ) {
+      const file = await findContentFile(kind, id, ...parts);
       if (file) return file;
       throw new Error(
         `Inhalt nicht gefunden: ${kind}/${id}/${parts.join("/")}`,
       );
-    };
+    }
 
     const contentExists = async (kind: ContentKind, id: string) =>
       (await exists(path.join(dataRoot, kind, id))) ||
       (await exists(path.join(sourceRoot, kind, id)));
 
-    const catalog = async (kind: ContentKind): Promise<CatalogEntry[]> => {
+    async function catalog(kind: ContentKind): Promise<CatalogEntry[]> {
       const ids = new Set([
         ...(await directoryIDs(path.join(sourceRoot, kind))),
         ...(await directoryIDs(path.join(dataRoot, kind))),
@@ -161,7 +167,7 @@ export default Plugin.define({
 
       return Promise.all(
         [...ids].sort().map(async (id) => {
-          const file = await contentFile(
+          const file = await requireContentFile(
             kind,
             id,
             kind === "npcs" ? "description.md" : "scene.md",
@@ -179,13 +185,13 @@ export default Plugin.define({
           return { id, title, description: firstLine, source };
         }),
       );
-    };
+    }
 
-    const copyGeneratedImage = async (
+    async function copyGeneratedImage(
       source: string,
       target: string,
       sessionID: string,
-    ) => {
+    ) {
       const imageRoot = dataPath(dataRoot, "session", sessionID, "images");
       const resolved = path.resolve(directory, source);
       const relative = path.relative(imageRoot, resolved);
@@ -197,9 +203,9 @@ export default Plugin.define({
       dataPath(dataRoot, path.relative(dataRoot, target));
       await mkdir(path.dirname(target), { recursive: true });
       await copyFile(resolved, target);
-    };
+    }
 
-    const writeNPCContexts = async (npc: string, contexts: NPCContext[]) => {
+    async function writeNPCContexts(npc: string, contexts: NPCContext[]) {
       validateID(npc, "NPC-ID");
       await Promise.all(
         contexts.map(async ({ scene, content }) => {
@@ -218,7 +224,397 @@ export default Plugin.define({
           await writeFile(target, `${content.trim()}\n`);
         }),
       );
-    };
+    }
+
+    async function prepareSession(
+      sessionID: string,
+      scene: string,
+      npcs: string[],
+    ) {
+      validateID(scene, "Szenen-ID");
+      for (const npc of npcs) validateID(npc, "NPC-ID");
+
+      const sessionRoot = dataPath(dataRoot, "session", sessionID);
+      const missingContexts: string[] = [];
+      const copies: [string, string][] = [];
+
+      for (const file of ["scene.md", "img.png"]) {
+        copies.push([
+          await requireContentFile("scenes", scene, file),
+          path.join(sessionRoot, "scenes", scene, file),
+        ]);
+      }
+
+      for (const npc of npcs) {
+        for (const file of ["description.md", "state.md", "img.png"]) {
+          copies.push([
+            await requireContentFile("npcs", npc, file),
+            path.join(sessionRoot, "npcs", npc, file),
+          ]);
+        }
+
+        const context = await findContentFile(
+          "npcs",
+          npc,
+          "scenes",
+          scene,
+          "scene.md",
+        );
+        if (context) {
+          copies.push([
+            context,
+            path.join(sessionRoot, "npcs", npc, "scenes", scene, "scene.md"),
+          ]);
+        } else {
+          missingContexts.push(npc);
+        }
+      }
+
+      // Erst alle Vorlagen auflösen, dann kopieren; vorhandene Session-Dateien bleiben erhalten.
+      await Promise.all(
+        copies.map(([source, target]) =>
+          copyIfMissing(dataRoot, source, target),
+        ),
+      );
+      return missingContexts;
+    }
+
+    async function writeNPC(
+      npc: string,
+      changes: NPCChanges,
+      sessionID: string,
+    ) {
+      const target = dataPath(dataRoot, "npcs", npc);
+      await mkdir(target, { recursive: true });
+      const writes: Promise<void>[] = [];
+
+      if (changes.description) {
+        writes.push(
+          writeFile(
+            path.join(target, "description.md"),
+            `${changes.description.trim()}\n`,
+          ),
+        );
+      }
+      if (changes.state) {
+        writes.push(
+          writeFile(path.join(target, "state.md"), `${changes.state.trim()}\n`),
+        );
+      }
+      if (changes.image) {
+        writes.push(
+          copyGeneratedImage(
+            changes.image,
+            path.join(target, "img.png"),
+            sessionID,
+          ),
+        );
+      }
+      if (changes.contexts) {
+        writes.push(writeNPCContexts(npc, changes.contexts));
+      }
+
+      await Promise.all(writes);
+    }
+
+    async function rootSessionID(context: ToolContext) {
+      let rootID: string = context.sessionID;
+      let session = await ctx.session.get(
+        { sessionID: context.sessionID },
+        { signal: context.signal },
+      );
+      while (session.parentID) {
+        rootID = session.parentID;
+        session = await ctx.session.get(
+          { sessionID: session.parentID },
+          { signal: context.signal },
+        );
+      }
+      return rootID;
+    }
+
+    async function saveSceneState(
+      sessionID: string,
+      current: SceneContext,
+      visualState: string,
+    ) {
+      const root = dataPath(dataRoot, "session", sessionID);
+      const contextFile = path.join(root, "scene-context.json");
+      const previous = await readContext(contextFile);
+      const previousNPCs =
+        previous?.scene === current.scene ? previous.npcs : [];
+      const additions = current.npcs.filter(
+        (npc) => !previousNPCs.includes(npc),
+      );
+      const removals = previousNPCs.filter(
+        (npc) => !current.npcs.includes(npc),
+      );
+
+      await writeState(
+        dataRoot,
+        contextFile,
+        `${JSON.stringify(current, null, 2)}\n`,
+      );
+      await writeState(
+        dataRoot,
+        dataPath(
+          dataRoot,
+          "session",
+          sessionID,
+          "scenes",
+          current.scene,
+          "visual-state.md",
+        ),
+        `${visualState}\n`,
+      );
+      return { additions, removals };
+    }
+
+    async function getSession(_input: unknown, context: ToolContext) {
+      return {
+        content: [
+          `Session-ID: ${context.sessionID}`,
+          `Session-Verzeichnis: .data/session/${context.sessionID}/`,
+        ].join("\n"),
+      };
+    }
+
+    async function prepareGameSession(input: unknown, context: ToolContext) {
+      const args = input as { scene: string; npcs: string[] };
+      const missingContexts = await prepareSession(
+        context.sessionID,
+        args.scene,
+        args.npcs,
+      );
+      const missing = missingContexts.length
+        ? ` Fehlende NPC-Szenenkontexte: ${missingContexts.join(", ")}.`
+        : "";
+      return {
+        content: `Session bereit: .data/session/${context.sessionID}/${missing}`,
+      };
+    }
+
+    async function getCatalog(input: unknown) {
+      const { kind } = input as { kind: ContentKind };
+      return { content: JSON.stringify(await catalog(kind), null, 2) };
+    }
+
+    async function getContentStatus(input: unknown) {
+      const { kind, name } = input as { kind: ContentKind; name: string };
+      const id = slugify(name);
+      return {
+        content: JSON.stringify({
+          id,
+          standard: await exists(path.join(sourceRoot, kind, id)),
+          local: await exists(path.join(dataRoot, kind, id)),
+        }),
+      };
+    }
+
+    async function readContent(input: unknown) {
+      const { kind, id, file, scene } = input as {
+        kind: ContentKind;
+        id: string;
+        file: string;
+        scene?: string;
+      };
+      if (kind === "scenes" && file !== "scene.md") {
+        throw new Error("Für Szenen ist nur scene.md lesbar");
+      }
+      if (kind === "npcs" && file === "scene.md") {
+        if (!scene)
+          throw new Error(
+            "Für einen NPC-Szenenkontext ist eine Szenen-ID erforderlich",
+          );
+        validateID(scene, "Szenen-ID");
+        return {
+          content: await readFile(
+            await requireContentFile(kind, id, "scenes", scene, file),
+            "utf8",
+          ),
+        };
+      }
+      return {
+        content: await readFile(
+          await requireContentFile(kind, id, file),
+          "utf8",
+        ),
+      };
+    }
+
+    async function createNPC(input: unknown, context: ToolContext) {
+      const args = input as {
+        name: string;
+        description: string;
+        state: string;
+        image: string;
+        contexts: NPCContext[];
+        mode: "auto" | "override";
+      };
+      const id = slugify(args.name);
+      const alreadyExists = await contentExists("npcs", id);
+      if (alreadyExists && args.mode === "auto") {
+        return {
+          content: `Entscheidung erforderlich: Die NPC-ID ${id} existiert bereits. Frage nach einem lokalen Override oder einer weiteren Neuanlage.`,
+        };
+      }
+
+      await writeNPC(id, args, context.sessionID);
+      return {
+        content: `NPC ${id} wurde unter .data/npcs/${id}/ angelegt.`,
+      };
+    }
+
+    async function createScene(input: unknown, context: ToolContext) {
+      const args = input as {
+        title: string;
+        description: string;
+        image: string;
+        contexts: { npc: string; content: string }[];
+        mode: "auto" | "override";
+      };
+      const id = slugify(args.title);
+      const alreadyExists = await contentExists("scenes", id);
+      if (alreadyExists && args.mode === "auto") {
+        return {
+          content: `Entscheidung erforderlich: Die Szenen-ID ${id} existiert bereits. Frage nach einem lokalen Override oder einer weiteren Neuanlage.`,
+        };
+      }
+
+      const target = dataPath(dataRoot, "scenes", id);
+      await mkdir(target, { recursive: true });
+      await Promise.all([
+        writeFile(
+          path.join(target, "scene.md"),
+          `## ${args.title.trim()}\n\n${args.description.trim()}\n`,
+        ),
+        copyGeneratedImage(
+          args.image,
+          path.join(target, "img.png"),
+          context.sessionID,
+        ),
+        ...args.contexts.map(({ npc, content }) => {
+          validateID(npc, "NPC-ID");
+          return writeNPCContexts(npc, [{ scene: id, content }]);
+        }),
+      ]);
+      return {
+        content: `Szene ${id} wurde unter .data/scenes/${id}/ angelegt.`,
+      };
+    }
+
+    async function updateNPC(input: unknown, context: ToolContext) {
+      const args = input as NPCChanges & { npc: string };
+      validateID(args.npc, "NPC-ID");
+      if (!(await contentExists("npcs", args.npc)))
+        throw new Error(`Unbekannte NPC-ID: ${args.npc}`);
+      if (
+        !args.description &&
+        !args.state &&
+        !args.image &&
+        !args.contexts?.length
+      ) {
+        throw new Error("Es wurde keine NPC-Änderung übergeben");
+      }
+
+      await writeNPC(args.npc, args, context.sessionID);
+      return { content: `NPC ${args.npc} wurde lokal aktualisiert.` };
+    }
+
+    async function updateScene(input: unknown, context: ToolContext) {
+      const args = input as {
+        scene: string;
+        npcs: string[];
+        visualState: string;
+        render: "never" | "participant-change";
+      };
+      validateID(args.scene, "Szenen-ID");
+      for (const npc of args.npcs) validateID(npc, "NPC-ID");
+
+      const rootID = await rootSessionID(context);
+      const sessionRoot = dataPath(dataRoot, "session", rootID);
+      if (
+        !(await exists(path.join(sessionRoot, "player", "context.json"))) &&
+        ((await exists(
+          path.join(sessionRoot, "player", "private", "selection.json"),
+        )) ||
+          !(await exists(path.join(sessionRoot, "scene-context.json"))))
+      ) {
+        throw new Error(
+          "Spielerinitialisierung muss vor Spielbeginn abgeschlossen sein",
+        );
+      }
+      const { additions, removals } = await saveSceneState(
+        rootID,
+        { scene: args.scene, npcs: args.npcs },
+        args.visualState,
+      );
+
+      if (
+        args.render === "never" ||
+        (additions.length === 0 && removals.length === 0)
+      ) {
+        return { content: "Szenenzustand gespeichert." };
+      }
+
+      try {
+        const image = await sceneRenderer.render(context, {
+          additions,
+          removals,
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: [
+                "Szenenzustand gespeichert.",
+                `Bild aktualisiert: ${image.path}`,
+              ].join("\n"),
+            },
+            await imageAttachment(image.file),
+          ],
+        };
+      } catch {
+        await sceneRenderer.pending(context.sessionID);
+        return {
+          content: "Szenenzustand gespeichert. Bildaktualisierung ausstehend.",
+        };
+      }
+    }
+
+    async function updateNPCStates(input: unknown, context: ToolContext) {
+      const args = input as { updates: { npc: string; content: string }[] };
+      const npcIDs = new Set<string>();
+      for (const update of args.updates) {
+        validateID(update.npc, "NPC-ID");
+        if (npcIDs.has(update.npc)) {
+          throw new Error(
+            `Zustand für ${update.npc} wurde mehrfach übergeben.`,
+          );
+        }
+        npcIDs.add(update.npc);
+      }
+
+      await Promise.all(
+        args.updates.map(async (update) => {
+          const target = dataPath(
+            dataRoot,
+            "session",
+            context.sessionID,
+            "npcs",
+            update.npc,
+            "state.md",
+          );
+          const temporary = `${target}.tmp`;
+          await writeFile(temporary, update.content);
+          await rename(temporary, target);
+        }),
+      );
+
+      return {
+        content: `Zustände für ${args.updates.map((update) => update.npc).join(", ")} gespeichert.`,
+      };
+    }
 
     await ctx.tool.transform((editor) => {
       editor.add({
@@ -226,14 +622,7 @@ export default Plugin.define({
         description:
           "Liefert die ID des aktuellen Hauptchats und dessen isoliertes Social-Game-Session-Verzeichnis.",
         input: { type: "object", properties: {}, additionalProperties: false },
-        async execute(_args, context) {
-          return {
-            content: [
-              `Session-ID: ${context.sessionID}`,
-              `Session-Verzeichnis: .data/session/${context.sessionID}/`,
-            ].join("\n"),
-          };
-        },
+        execute: getSession,
       });
 
       editor.add({
@@ -249,75 +638,7 @@ export default Plugin.define({
           required: ["scene", "npcs"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as { scene: string; npcs: string[] };
-          validateID(args.scene, "Szenen-ID");
-
-          for (const npc of args.npcs) validateID(npc, "NPC-ID");
-
-          const sessionRoot = dataPath(dataRoot, "session", context.sessionID);
-          const missingContexts: string[] = [];
-          const copied = [
-            [
-              await contentFile("scenes", args.scene, "scene.md"),
-              path.join(sessionRoot, "scenes", args.scene, "scene.md"),
-            ],
-            [
-              await contentFile("scenes", args.scene, "img.png"),
-              path.join(sessionRoot, "scenes", args.scene, "img.png"),
-            ],
-          ];
-
-          for (const npc of args.npcs) {
-            for (const file of ["description.md", "state.md"]) {
-              copied.push([
-                await contentFile("npcs", npc, file),
-                path.join(sessionRoot, "npcs", npc, file),
-              ]);
-            }
-
-            copied.push([
-              await contentFile("npcs", npc, "img.png"),
-              path.join(sessionRoot, "npcs", npc, "img.png"),
-            ]);
-
-            const npcScene = await resolvedContentFile(
-              "npcs",
-              npc,
-              "scenes",
-              args.scene,
-              "scene.md",
-            );
-            if (npcScene) {
-              copied.push([
-                npcScene,
-                path.join(
-                  sessionRoot,
-                  "npcs",
-                  npc,
-                  "scenes",
-                  args.scene,
-                  "scene.md",
-                ),
-              ]);
-            } else {
-              missingContexts.push(npc);
-            }
-          }
-
-          await Promise.all(
-            copied.map(([source, target]) =>
-              copyIfMissing(dataRoot, source, target),
-            ),
-          );
-
-          const missing = missingContexts.length
-            ? ` Fehlende NPC-Szenenkontexte: ${missingContexts.join(", ")}.`
-            : "";
-          return {
-            content: `Session bereit: .data/session/${context.sessionID}/${missing}`,
-          };
-        },
+        execute: prepareGameSession,
       });
 
       editor.add({
@@ -330,10 +651,7 @@ export default Plugin.define({
           required: ["kind"],
           additionalProperties: false,
         },
-        async execute(input) {
-          const { kind } = input as { kind: ContentKind };
-          return { content: JSON.stringify(await catalog(kind), null, 2) };
-        },
+        execute: getCatalog,
       });
 
       editor.add({
@@ -349,17 +667,7 @@ export default Plugin.define({
           required: ["kind", "name"],
           additionalProperties: false,
         },
-        async execute(input) {
-          const { kind, name } = input as { kind: ContentKind; name: string };
-          const id = slugify(name);
-          return {
-            content: JSON.stringify({
-              id,
-              standard: await exists(path.join(sourceRoot, kind, id)),
-              local: await exists(path.join(dataRoot, kind, id)),
-            }),
-          };
-        },
+        execute: getContentStatus,
       });
 
       editor.add({
@@ -380,33 +688,7 @@ export default Plugin.define({
           required: ["kind", "id", "file"],
           additionalProperties: false,
         },
-        async execute(input) {
-          const { kind, id, file, scene } = input as {
-            kind: ContentKind;
-            id: string;
-            file: string;
-            scene?: string;
-          };
-          if (kind === "scenes" && file !== "scene.md") {
-            throw new Error("Für Szenen ist nur scene.md lesbar");
-          }
-          if (kind === "npcs" && file === "scene.md") {
-            if (!scene)
-              throw new Error(
-                "Für einen NPC-Szenenkontext ist eine Szenen-ID erforderlich",
-              );
-            validateID(scene, "Szenen-ID");
-            return {
-              content: await readFile(
-                await contentFile(kind, id, "scenes", scene, file),
-                "utf8",
-              ),
-            };
-          }
-          return {
-            content: await readFile(await contentFile(kind, id, file), "utf8"),
-          };
-        },
+        execute: readContent,
       });
 
       editor.add({
@@ -444,42 +726,7 @@ export default Plugin.define({
           ],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as {
-            name: string;
-            description: string;
-            state: string;
-            image: string;
-            contexts: NPCContext[];
-            mode: "auto" | "override";
-          };
-          const id = slugify(args.name);
-          const alreadyExists = await contentExists("npcs", id);
-          if (alreadyExists && args.mode === "auto") {
-            return {
-              content: `Entscheidung erforderlich: Die NPC-ID ${id} existiert bereits. Frage nach einem lokalen Override oder einer weiteren Neuanlage.`,
-            };
-          }
-
-          const target = dataPath(dataRoot, "npcs", id);
-          await mkdir(target, { recursive: true });
-          await Promise.all([
-            writeFile(
-              path.join(target, "description.md"),
-              `${args.description.trim()}\n`,
-            ),
-            writeFile(path.join(target, "state.md"), `${args.state.trim()}\n`),
-            copyGeneratedImage(
-              args.image,
-              path.join(target, "img.png"),
-              context.sessionID,
-            ),
-            writeNPCContexts(id, args.contexts),
-          ]);
-          return {
-            content: `NPC ${id} wurde unter .data/npcs/${id}/ angelegt.`,
-          };
-        },
+        execute: createNPC,
       });
 
       editor.add({
@@ -509,43 +756,7 @@ export default Plugin.define({
           required: ["title", "description", "image", "contexts", "mode"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as {
-            title: string;
-            description: string;
-            image: string;
-            contexts: { npc: string; content: string }[];
-            mode: "auto" | "override";
-          };
-          const id = slugify(args.title);
-          const alreadyExists = await contentExists("scenes", id);
-          if (alreadyExists && args.mode === "auto") {
-            return {
-              content: `Entscheidung erforderlich: Die Szenen-ID ${id} existiert bereits. Frage nach einem lokalen Override oder einer weiteren Neuanlage.`,
-            };
-          }
-
-          const target = dataPath(dataRoot, "scenes", id);
-          await mkdir(target, { recursive: true });
-          await Promise.all([
-            writeFile(
-              path.join(target, "scene.md"),
-              `## ${args.title.trim()}\n\n${args.description.trim()}\n`,
-            ),
-            copyGeneratedImage(
-              args.image,
-              path.join(target, "img.png"),
-              context.sessionID,
-            ),
-            ...args.contexts.map(({ npc, content }) => {
-              validateID(npc, "NPC-ID");
-              return writeNPCContexts(npc, [{ scene: id, content }]);
-            }),
-          ]);
-          return {
-            content: `Szene ${id} wurde unter .data/scenes/${id}/ angelegt.`,
-          };
-        },
+        execute: createScene,
       });
 
       editor.add({
@@ -575,60 +786,7 @@ export default Plugin.define({
           required: ["npc"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as {
-            npc: string;
-            description?: string;
-            state?: string;
-            image?: string;
-            contexts?: NPCContext[];
-          };
-          validateID(args.npc, "NPC-ID");
-          if (!(await contentExists("npcs", args.npc)))
-            throw new Error(`Unbekannte NPC-ID: ${args.npc}`);
-          if (
-            !args.description &&
-            !args.state &&
-            !args.image &&
-            !args.contexts?.length
-          ) {
-            throw new Error("Es wurde keine NPC-Änderung übergeben");
-          }
-
-          const target = dataPath(dataRoot, "npcs", args.npc);
-          await mkdir(target, { recursive: true });
-          await Promise.all([
-            ...(args.description
-              ? [
-                  writeFile(
-                    path.join(target, "description.md"),
-                    `${args.description.trim()}\n`,
-                  ),
-                ]
-              : []),
-            ...(args.state
-              ? [
-                  writeFile(
-                    path.join(target, "state.md"),
-                    `${args.state.trim()}\n`,
-                  ),
-                ]
-              : []),
-            ...(args.image
-              ? [
-                  copyGeneratedImage(
-                    args.image,
-                    path.join(target, "img.png"),
-                    context.sessionID,
-                  ),
-                ]
-              : []),
-            ...(args.contexts?.length
-              ? [writeNPCContexts(args.npc, args.contexts)]
-              : []),
-          ]);
-          return { content: `NPC ${args.npc} wurde lokal aktualisiert.` };
-        },
+        execute: updateNPC,
       });
 
       editor.add({
@@ -649,93 +807,7 @@ export default Plugin.define({
           required: ["scene", "npcs", "visualState", "render"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as {
-            scene: string;
-            npcs: string[];
-            visualState: string;
-            render: "never" | "participant-change";
-          };
-          validateID(args.scene, "Szenen-ID");
-          for (const npc of args.npcs) validateID(npc, "NPC-ID");
-
-          const session = await ctx.session.get(
-            { sessionID: context.sessionID },
-            { signal: context.signal },
-          );
-          let rootID: string = context.sessionID;
-          let parentID = session.parentID;
-          while (parentID) {
-            rootID = parentID;
-            const parent = await ctx.session.get(
-              { sessionID: parentID },
-              { signal: context.signal },
-            );
-            parentID = parent.parentID;
-          }
-
-          const root = dataPath(dataRoot, "session", rootID);
-          const contextFile = path.join(root, "scene-context.json");
-          const previous = await readContext(contextFile);
-          const previousNPCs =
-            previous?.scene === args.scene ? previous.npcs : [];
-          const additions = args.npcs.filter(
-            (npc) => !previousNPCs.includes(npc),
-          );
-          const removals = previousNPCs.filter(
-            (npc) => !args.npcs.includes(npc),
-          );
-
-          await writeState(
-            dataRoot,
-            contextFile,
-            `${JSON.stringify({ scene: args.scene, npcs: args.npcs }, null, 2)}\n`,
-          );
-          await writeState(
-            dataRoot,
-            dataPath(
-              dataRoot,
-              "session",
-              rootID,
-              "scenes",
-              args.scene,
-              "visual-state.md",
-            ),
-            `${args.visualState}\n`,
-          );
-
-          if (
-            args.render === "never" ||
-            (additions.length === 0 && removals.length === 0)
-          ) {
-            return { content: "Szenenzustand gespeichert." };
-          }
-
-          try {
-            const image = await sceneRenderer.render(context, {
-              additions,
-              removals,
-            });
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: [
-                    "Szenenzustand gespeichert.",
-                    `Bild aktualisiert: ${image.path}`,
-                  ].join("\n"),
-                },
-                await imageAttachment(image.file),
-              ],
-            };
-          } catch {
-            await sceneRenderer.pending(context.sessionID);
-            return {
-              content:
-                "Szenenzustand gespeichert. Bildaktualisierung ausstehend.",
-            };
-          }
-        },
+        execute: updateScene,
       });
 
       editor.add({
@@ -761,40 +833,7 @@ export default Plugin.define({
           required: ["updates"],
           additionalProperties: false,
         },
-        async execute(input, context) {
-          const args = input as { updates: { npc: string; content: string }[] };
-          const npcIDs = new Set<string>();
-          for (const update of args.updates) {
-            validateID(update.npc, "NPC-ID");
-            if (npcIDs.has(update.npc)) {
-              throw new Error(
-                `Zustand für ${update.npc} wurde mehrfach übergeben.`,
-              );
-            }
-            npcIDs.add(update.npc);
-          }
-
-          await Promise.all(
-            args.updates.map(async (update) => {
-              const target = dataPath(
-                dataRoot,
-                "session",
-                context.sessionID,
-                "npcs",
-                update.npc,
-                "state.md",
-              );
-              const temporary = `${target}.tmp`;
-
-              await writeFile(temporary, update.content);
-              await rename(temporary, target);
-            }),
-          );
-
-          return {
-            content: `Zustände für ${args.updates.map((update) => update.npc).join(", ")} gespeichert.`,
-          };
-        },
+        execute: updateNPCStates,
       });
     });
   },
